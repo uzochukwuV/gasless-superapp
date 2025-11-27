@@ -60,6 +60,7 @@ const EMaxRevotesReached: u64 = 17;
 const ENoQuestionAsked: u64 = 18;
 const EVotingStillActive: u64 = 19;
 const EPlayerAlreadyJoined: u64 = 20;
+const EQuestionAlreadyAsked: u64 = 21;
 
 // === Structs ===
 
@@ -409,7 +410,7 @@ public entry fun ask_question(
     ctx: &mut TxContext
 ) {
     assert!(game.status == 1, EGameNotActive);
-    assert!(!game.question_asked, ENoQuestionAsked);
+    assert!(!game.question_asked, EQuestionAlreadyAsked);
     assert!(questioner_answer >= 1 && questioner_answer <= 3, EInvalidAnswer);
     
     let sender = tx_context::sender(ctx);
@@ -522,18 +523,19 @@ public entry fun finalize_round(
     
     // Count votes
     let (option_1_votes, option_2_votes, option_3_votes) = count_votes(game);
-    
+
     // Find minority (option with LEAST votes)
     let min_votes = min_of_three(option_1_votes, option_2_votes, option_3_votes);
-    
-    // Check for tie in minority
+
+    // Check for tie in minority (only trigger revote if min_votes > 0)
     let mut tied_options = vector::empty<u8>();
     if (option_1_votes == min_votes) vector::push_back(&mut tied_options, 1);
     if (option_2_votes == min_votes) vector::push_back(&mut tied_options, 2);
     if (option_3_votes == min_votes) vector::push_back(&mut tied_options, 3);
-    
-    // If 2+ options tied for last place → REVOTE
-    if (vector::length(&tied_options) > 1) {
+
+    // If 2+ options tied for last place AND they have actual votes → REVOTE
+    // If min_votes is 0, no one voted for those options, so no revote needed
+    if (vector::length(&tied_options) > 1 && min_votes > 0) {
         handle_revote(game, clock, ctx);
         return
     };
