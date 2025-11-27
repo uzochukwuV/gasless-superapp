@@ -1,0 +1,336 @@
+    1  linera
+    2  linera-wallet
+    3  cargo
+    4  sudo apt install cargo
+    5  sudo apt install rustup
+    6  sudo apt install build-essential
+    7  sudo apt install --assume-yes git clang curl libssl-dev protobuf-compiler
+    8  source ~/.cargo/env
+    9  rustc --version
+   10  sudo apt update
+   11  sudo apt install --assume-yes git clang curl libssl-dev llvm libudev-dev make protobuf-compiler
+   12  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   13  rustc --version
+   14  rustup default stable
+   15  rustup update
+   16  rustup target add wasm32-unknown-unknown
+   17  rustup component add rust-src
+   18  rustup show
+   19  rustup toolchain install 1.86.0
+   20  rustup default 1.86.0
+   21  rustup target add wasm32-unknown-unknown --toolchain 1.86.0
+   22  rustup component add rust-src --toolchain 1.86.0
+   23  cargo install --locked staging-chain-spec-builder@10.0.0
+   24  cargo uninstall --locked staging-chain-spec-builder@10.0.0
+   25  cargo isnatll g++
+   26  curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v21.11/protoc-21.11-linux-x86_64.zip
+   27  unzip protoc-21.11-linux-x86_64.zip -d $HOME/.local
+   28  cargo install --locked linera-storage-service@0.15.5
+   29  cargo install --locked linera-service@0.15.5
+   30  mkdir diccy
+   31  cd diccy
+   32  git clone https://github.com/uzochukwuv/diccy.git
+   33  git clone https://github.com/uzochukwuv/diccy.git .
+   34  linera wallet init --faucet https://faucet.testnet-conway.linera.net
+   35  linera
+   36  cargo linera
+   37  linera
+   38  dir
+   39  cd ..
+   40  linera
+   41  cd diccy
+   42  sudo apt update
+   43  linera
+   44  apt list
+   45  l
+   46  ls
+   47  linera
+   48  zuo
+   49  linera
+   50  cmd
+   51  linera
+   52  cd diccy
+   53  dir
+   54  linera
+   55  cargo install --locked linera-service@0.15.6
+   56  linera
+   57  ls -l ~/.cargo/bin/linera* 2>/dev/null || true; echo '--- PATH ---'; echo "$PATH"; echo '--- which linera ---'; which linera || true; echo '--- ~/.cargo/env (first 20 lines) ---'; head -n 20 ~/.cargo/env 2>/dev/null || true; echo '--- try running full path (version) ---'; ~/.cargo/bin/linera --version 2>&1 || true
+   58  linera
+   59  export PATH="$HOME/.cargo/bin:$PATH"
+   60  linera
+   61  git clone https://github.com/uzochukwuV/diccy.git .
+   62  ls -la /home/uzo/diccy/ | head -20
+   63  sudo chown -R uzo:uzo /home/uzo/diccy
+   64  rm -rf /home/uzo/diccy && mkdir -p /home/uzo/diccy
+   65  cd /home/uzo/diccy && git clone https://github.com/uzochukwuV/diccy.git .
+   66  linera
+   67  cargo build --release --target wasm32-unknown-unknown
+   68  cd battlechain-linera
+   69  cd battle-chain
+   70  cargo build --release --target wasm32-unknown-unknown
+   71  cd ..
+   72  cd battle-token
+   73  cargo build --release --target wasm32-unknown-unknown
+   74  cd ..
+   75  cd player-chain
+   76  cargo build --release --target wasm32-unknown-unknown
+   77  cd /home/uzo/diccy && cargo metadata --no-deps --format-version 1
+   78  cargo metadata --no-deps --format-version 1
+   79  cd /home/uzo/diccy && cargo metadata --no-deps --format-version 1
+   80  cd /home/uzo/diccy && cargo build -p player-chain --target wasm32-unknown-unknown --release
+   81  cd /home/uzo/diccy && cargo build -p player-chain --target wasm32-wasi -v
+   82  rustup target add wasm32-unknown-unknown && cd /home/uzo/diccy && cargo build -p player-chain --target wasm32-unknown-unknown --release -v
+   83  cd /home/uzo/diccy && cargo build -p player-chain --target wasm32-unknown-unknown --release -v
+   84  cd /home/uzo/diccy && cargo tree -e features -p linera-wasmer || true
+   85  cd /home/uzo/diccy && cargo build -p player-chain --target wasm32-unknown-unknown --release -v
+   86  cd /home/uzo/diccy && cargo update -p linera-sdk --precise 0.15.6 || true; cargo update -p linera-views --precise 0.15.6 || true; cargo build -p player-chain --target wasm32-unknown-unknown --release -v
+   87  cd /home/uzo/diccy && cargo update -p linera-sdk --precise 0.15.6 || true; cargo update -p linera-views --precise 0.15.6 || true; cargo build -p prediction-chain --target wasm32-unknown-unknown --release -v
+   88  cd /home/uzo/diccy && cargo build -p battle-chain --target wasm32-unknown-unknown --release -v
+   89  cd battle-chain
+   90  cls
+   91  clear
+   92  cd battle-chain
+   93  cd bettlechain-linera
+   94  cd battlechain-linera
+   95  cd battle-chain
+   96  cargo build --release --target wasm32-unknown-unknown
+   97  cd   ..
+   98  cd ..
+   99  cd diccy
+  100  dir
+  101  cd ..
+  102  cd diccy
+  103  di
+  104  dir
+  105  cd home
+  106  dir
+  107  cd uzo
+  108  dir
+  109  cd diccy
+  110  git clone https://github.com/uzochukwuV/diccy.git .
+  111  dir
+  112  cd ..
+  113  cd home
+  114  dir
+  115  mkdir main
+  116  cd main
+  117  git clone https://github.com/uzochukwuV/diccy.git .
+  118  npx hardhat compile
+  119  Compiling 8 Solidity files
+  120  TypeError: Assembly access to immutable variables is not supported.
+  121  203 |             tokenInSize := extcodesize(sload(USDC.slot))
+  122  TypeError: Assembly access to immutable variables is not supported.
+  123  204 |             tokenOutSize := extcodesize(sload(WETH.slot))
+  124  Error HH600: Compilation failed
+  125  For more info go to https://hardhat.org/HH600 or run Hardhat with --show-stack-traces
+  126  clear
+  127  cargo build --release --target wasm32-unknown-unknown
+  128  linera
+  129  wsl ls -la
+  130  kiro
+  131  dir
+  132  cd main
+  133  kiro .
+  134  linera
+  135  linera
+  136  ubuntu
+  137  git init .
+  138  npx hardhat test
+  139  cd taskeronchain
+  140  npx hardhat test
+  141  git add .
+  142  . "\home\uzo\.cursor-server\bin\63fcac100bd5d5749f2a98aa47d65f6eca61db30/out/vs/workbench/contrib/terminal/common/scripts/shellIntegration-bash.sh"
+  143  linera
+  144  . "\home\uzo\.cursor-server\bin\63fcac100bd5d5749f2a98aa47d65f6eca61db30/out/vs/workbench/contrib/terminal/common/scripts/shellIntegration-bash.sh"
+  145  ./scripts/deploy-all.sh
+  146  cd battlechain-linera
+  147  ./scripts/deploy-all.sh
+  148  linera
+  149  export PATH="$HOME/.cargo/bin:$PATH"
+  150  linera
+  151  ./scripts/deploy-all.sh
+  152  linera wallet init --faucet http://localhost:8080
+  153  ./scripts/deploy-all.sh
+  154  cargo install --locked linera-storage-service@0.15.6
+  155  cargo install --list | grep linera
+  156  cargo bin linera
+  157  ~/.cargo/bin/linera --version
+  158  export PATH="$HOME/.cargo/bin:$PATH"
+  159  linera
+  160  Hello, Linera
+  161  In this section, you will learn how to initialize a developer wallet, interact with the current Testnet, run a local development network, then compile and deploy your first application from scratch.
+  162  By the end of this section, you will have a microchain on the Testnet and/or on your local network, and a working application that can be queried using GraphQL.
+  163  Creating a wallet on the latest Testnet
+  164  To interact with the latest Testnet, you will need a developer wallet, a new microchain, and some tokens. These can be all obtained at once by querying the Testnet's faucet service as follows:
+  165  linera wallet init --faucet https://faucet.testnet-conway.linera.net
+  166  linera wallet request-chain --faucet https://faucet.testnet-conway.linera.net
+  167  If you obtain an error message instead, make sure to use a Linera toolchain compatible with the current Testnet.
+  168  Info
+  169  A Linera Testnet is a deployment of the Linera protocol used for testing. A deployment consists of a number of validators, each of which runs a frontend service (aka. linera-proxy), a number of workers (aka. linera-server), and a shared database (by default linera-storage-service).
+  170  Using a local test network
+  171  Another option is to start your own local development network. To do so, run the following command:
+  172  linera net up --with-faucet --faucet-port 8080
+  173  This will start a validator with the default number of shards and start a faucet.
+  174  Now, we're ready to create a developer wallet by running the following command in a separate shell:
+  175  linera wallet init --faucet http://localhost:8080
+  176  linera wallet request-chain --faucet http://localhost:8080
+  177  Note
+  178  A wallet is valid for the lifetime of its network. Every time a local network is restarted, the wallet needs to be removed and created again.
+  179  Working with several developer wallets and several networks
+  180  By default, the linera command looks for wallet files located in a configuration path determined by your operating system. If you prefer to choose the location of your wallet files, you may optionally set the variables LINERA_WALLET, LINERA_KEYSTORE and LINERA_STORAGE as follows:
+  181  DIR=$HOME/my_directory
+  182  mkdir -p $DIR
+  183  export LINERA_WALLET="$DIR/wallet.json"
+  184  export LINERA_KEYSTORE="$DIR/keystore.json"
+  185  export LINERA_STORAGE="rocksdb:$DIR/wallet.db"
+  186  Choosing such a directory can be useful to work with several networks because a wallet is always specific to the network where it was created.
+  187  Note
+  188  We refer to the wallets created by the linera CLI as "developer wallets" because they are operated from a developer tool and merely meant for testing and development.
+  189  Production-grade user wallets are generally operated by a browser extension, a mobile application, or a hardware device.
+  190  Interacting with the Linera network
+  191  To check that the network is working, you can synchronize your chain with the rest of the network and display the chain balance as follows:
+  192  linera sync
+  193  linera query-balance
+  194  You should see an output number, e.g. 10.
+  195  Building an example application
+  196  Applications running on Linera are Wasm bytecode. Each validator and client has a built-in Wasm virtual machine (VM) which can execute bytecode.
+  197  Let's build the counter application from the examples/ subdirectory of the Linera testnet branch:
+  198  cd examples/counter && cargo build --release --target wasm32-unknown-unknown
+  199  Publishing your application
+  200  You can publish the bytecode and create an application using it on your local network using the linera client's publish-and-create command and provide:
+  201  The location of the contract bytecode
+  202  The location of the service bytecode
+  203  The JSON encoded initialization arguments
+  204  linera publish-and-create   ../target/wasm32-unknown-unknown/release/counter_{contract,service}.wasm   --json-argument "42"
+  205  Congratulations! You've published your first application on Linera!
+  206  Querying your application
+  207  Now let's query your application to get the current counter value. To do that, we need to use the client running in service mode. This will expose a bunch of APIs locally which we can use to interact with applications on the network.
+  208  linera service --port 8080
+  209  Navigate to http://localhost:8080 in your browser to access GraphiQL, the GraphQL IDE. We'll look at this in more detail in a later section; for now, list the applications deployed on your default chain by running:
+  210  query {
+  211    applications(chainId: "...") {
+  212      id
+  213      description
+  214      link
+  215    }
+  216  }
+  217  where ... are replaced by the chain ID shown by linera wallet show.
+  218  Since we've only deployed one application, the results returned have a single entry.
+  219  At the bottom of the returned JSON there is a field link. To interact with your application copy and paste the link into a new browser tab.
+  220  Finally, to query the counter value, run:
+  221  query {
+  222  }
+  223  This will return a value of 42, which is the initialization argument we specified when deploying our application.
+  224  cargo build --release --target wasm
+  225  run.bash
+  226  ./run.bash
+  227  ./scripts/build-all.sh
+  228  cd battlechain-linera
+  229  ./scripts/deploy-all.sh
+  230  export PATH="$HOME/.cargo/bin:$PATH"
+  231  ./scripts/deploy-all.sh
+  232  linera wallet init --faucet https://faucet.testnet-conway.linera.net
+  233  linera wallet request-chain --faucet https://faucet.testnet-conway.linera.net
+  234  linera wallet init --faucet http://localhost:8080
+  235  linera wallet request-chain --faucet http://localhost:8080
+  236  linera wallet init --faucet http://localhost:8080
+  237  DIR=$HOME/diccy-1
+  238  mkdir -p $DIR
+  239  DIR=$HOME/diccy-1/wallet
+  240  mkdir -p $DIR
+  241  export LINERA_WALLET="$DIR/wallet.json"
+  242  export LINERA_KEYSTORE="$DIR/keystore.json"
+  243  export LINERA_STORAGE="rocksdb:$DIR/wallet.db"
+  244  linera wallet init --faucet http://localhost:8080
+  245  linera wallet request-chain --faucet http://localhost:8080
+  246  linera sync
+  247  linera query-balance
+  248  ./scripts/deploy-all.sh
+  249  linera publish-and-create   ../target/wasm32-unknown-unknown/release/battlechain_shared_types_{contract,service}.wasm
+  250  linera publish-and-create   ./target/wasm32-unknown-unknown/release/battlechain_shared_types_{contract,service}.wasm
+  251  linera publish-and-create   ./target/wasm32-unknown-unknown/release/battlechain_shared_types.wasm
+  252  linera
+  253  linera project
+  254  linera project new main
+  255  cd main
+  256  cargo build --release --target wasm32-unknown-unknown
+  257  cd ..
+  258  cd battle-chain
+  259  cargo build --release --target wasm32-unknown-unknown
+  260  linera publish-and-create target/wasm32-unknown-unknown/release/battle_chain.wasm
+  261  cd ..
+  262  ./scripts/deploy-all.sh
+  263  linera project new main
+  264  cd ..
+  265  git add .
+  266  git commit -am "real shit"
+  267  git config --global user.email "vic.ezealor@gmail.com"
+  268  git add .
+  269  git commit -am "real shit"
+  270  git pull
+  271  it config pull.rebase false
+  272  git config pull.rebase false
+  273  git pull
+  274  linera
+  275  export PATH="$HOME/.cargo/bin:$PATH"
+  276  cd battlechain-linera
+  277  linera net up --with-faucet --faucet-port 8080
+  278  linera 
+  279  linera net up --with-faucet --faucet-port 8080
+  280  kill-port 
+  281  linera net up --with-faucet --faucet-port 8080
+  282  cd ..
+  283  git add .
+  284  git commit -am "pulling"
+  285  git pull
+  286  export PATH="$HOME/.cargo/bin:$PATH"
+  287  linera
+  288  cd battlechain-linera
+  289  ./test_battle_flow.sh
+  290  ./tests/test_battle_flow.sh
+  291  ./tests/test_end_to_end.sh
+  292  linera sync
+  293  ./tests/test_end_to_end.sh
+  294  rm -rf "$WALLET_DIR"
+  295  rm -rf /home/uzo/.config/linera
+  296  rm -rf /home/uzo/.linera-battlechain-test
+  297  sudo lsof -t -i:13001
+  298  kill -9 $(sudo lsof -t -i:13001) 2>/dev/null || true
+  299  kill -9 $(sudo lsof -t -i:10001) 2>/dev/null || true
+  300  kill -9 $(sudo lsof -t -i:12001) 2>/dev/null || true
+  301  GREEN='\033[0;32m'
+  302  YELLOW='\033[1;33m'
+  303  RED='\033[0;31m'
+  304  BLUE='\033[0;34m'
+  305  NC='\033[0m' # No Color
+  306  # Configuration
+  307  FAUCET_PORT=8080
+  308  SERVICE_PORT=8081
+  309  PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  310  WALLET_DIR="$HOME/.linera-battlechain-test"
+  311  echo -e "${BLUE}========================================${NC}"
+  312  echo -e "${BLUE}  BATTLECHAIN END-TO-END TEST${NC}"
+  313  echo -e "${BLUE}========================================${NC}"
+  314  echo ""
+  315  echo "Project directory: $PROJECT_DIR"
+  316  echo "Wallet directory: $WALLET_DIR"
+  317  echo ""
+  318  FAUCET_URL="http://localhost:$FAUCET_PORT"
+  319  echo "Creating default wallet for deployments..."
+  320  export LINERA_WALLET="$WALLET_DIR/wallet.json"
+  321  export LINERA_KEYSTORE="$WALLET_DIR/keystore.json"
+  322  export LINERA_STORAGE="rocksdb:$WALLET_DIR/wallet.db"
+  323  linera wallet init --faucet "$FAUCET_URL"
+  324  linera net up --with-faucet --faucet-port $FAUCET_PORT > /dev/null 2>&1 &
+  325  NETWORK_PID=$!
+  326  linera wallet init --faucet "$FAUCET_URL"
+  327  kill -9 $(sudo lsof -t -i:13001) 2>/dev/null || true
+  328  ./tests/test_end_to_end.sh
+  329  nano ~/.bashrc
+  330  ~/.terminal_output.log
+  331  history > commands.log
+  332  cd .
+  333  cd ..
+  334  cd coe_contracts
+  335  cd core_contracts
+  336  history > commands.log
