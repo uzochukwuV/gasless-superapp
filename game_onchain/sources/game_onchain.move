@@ -59,6 +59,7 @@ const EOptionTooLong: u64 = 16;
 const EMaxRevotesReached: u64 = 17;
 const ENoQuestionAsked: u64 = 18;
 const EVotingStillActive: u64 = 19;
+const EPlayerAlreadyJoined: u64 = 20;
 
 // === Structs ===
 
@@ -312,8 +313,11 @@ public entry fun join_game(
     assert!(vector::length(&game.players) < MAX_PLAYERS_PER_GAME, EGameFull);
     assert!(game.status == 0, EGameNotWaiting);
     assert!(coin::value(&payment) >= lobby.entry_fee, EInsufficientPayment);
-    
+
     let player = tx_context::sender(ctx);
+
+    // Check if player already joined
+    assert!(!vector::contains(&game.players, &player), EPlayerAlreadyJoined);
     
     // Split platform fee (5%)
     let fee_amount = (lobby.entry_fee * PLATFORM_FEE_BPS) / 10000;
@@ -991,10 +995,10 @@ public fun get_voting_stats(game: &Game, clock: &Clock): (u64, u64, u64) {
     (count_a, count_b, count_c)
 }
 
-/// Check if player can claim prize
-public fun can_claim_prize(game: &Game, player: address): bool {
-    game.status == 2 && // finished
-    !vector::contains(&game.eliminated, &player) &&
-    !table::contains(&game.prize_claimed, player)
-}
+    /// Check if player can claim prize
+    public fun can_claim_prize(game: &Game, player: address): bool {
+        game.status == 2 && // finished
+        !vector::contains(&game.eliminated, &player) &&
+        !table::contains(&game.prize_claimed, player)
+    }
 }
