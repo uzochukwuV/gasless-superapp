@@ -310,9 +310,10 @@ public entry fun join_game(
     clock: &Clock,
     ctx: &mut TxContext
 ) {
+    // Ensure game hasn't started yet (status must be 0 = waiting)
+    assert!(game.status == 0, EGameNotWaiting);
     assert!(game.tier == lobby.tier, EInvalidTier);
     assert!(vector::length(&game.players) < MAX_PLAYERS_PER_GAME, EGameFull);
-    assert!(game.status == 0, EGameNotWaiting);
     assert!(coin::value(&payment) >= lobby.entry_fee, EInsufficientPayment);
 
     let player = tx_context::sender(ctx);
@@ -415,7 +416,13 @@ public entry fun ask_question(
     
     let sender = tx_context::sender(ctx);
     let current_time = clock::timestamp_ms(clock);
-    
+
+    // Validate sender is a player in the game
+    assert!(vector::contains(&game.players, &sender), EPlayerEliminated);
+
+    // Validate sender is not eliminated
+    assert!(!vector::contains(&game.eliminated, &sender), EPlayerEliminated);
+
     // Validate character limits
     assert!(
         std::string::length(&question) <= MAX_QUESTION_LENGTH,
@@ -433,8 +440,8 @@ public entry fun ask_question(
         std::string::length(&option_c) <= MAX_OPTION_LENGTH,
         EOptionTooLong
     );
-    
-    // Check if original questioner or timeout (anyone can ask)
+
+    // Check if original questioner or timeout (any non-eliminated player can ask)
     if (sender != game.current_questioner) {
         assert!(current_time > game.deadline, ENotQuestioner);
         // Update questioner to whoever asked
@@ -482,10 +489,13 @@ public entry fun submit_answer(
     assert!(game.status == 1, EGameNotActive);
     assert!(game.question_asked, ENoQuestionAsked);
     assert!(choice >= 1 && choice <= 3, EInvalidAnswer);
-    
+
     let sender = tx_context::sender(ctx);
     let current_time = clock::timestamp_ms(clock);
-    
+
+    // Check sender is a player in the game
+    assert!(vector::contains(&game.players, &sender), EPlayerEliminated);
+
     // Check player is not eliminated
     assert!(!vector::contains(&game.eliminated, &sender), EPlayerEliminated);
     
@@ -517,48 +527,79 @@ public entry fun finalize_round(
 ) {
     assert!(game.status == 1, EGameNotActive);
     assert!(game.question_asked, ENoQuestionAsked);
-    
+
     let current_time = clock::timestamp_ms(clock);
     assert!(current_time > game.deadline, ETimeNotExpired);
-    
-    // Count votes
+
+    // Step 1: Eliminate non-answerers FIRST
+    let non_answerers_eliminated = eliminate_non_answerers(game);
+
+    // Step 2: Count votes from remaining players
     let (option_1_votes, option_2_votes, option_3_votes) = count_votes(game);
 
-    // Find minority (option with LEAST votes)
-    let min_votes = min_of_three(option_1_votes, option_2_votes, option_3_votes);
+    // Step 3: Check if everyone picked the same option (move to next round)
+    if ((option_1_votes > 0 && option_2_votes == 0 && option_3_votes == 0) ||
+        (option_1_votes == 0 && option_2_votes > 0 && option_3_votes == 0) ||
+        (option_1_votes == 0 && option_2_votes == 0 && option_3_votes > 0)) {
+        // All picked same option → move to next round
+        event::emit(RoundFinalized {
+            game_id: object::id(game),
+            round: game.current_round,
+            eliminated_option: 0, // No option eliminated (all same)
+            eliminated_count: non_answerers_eliminated,
+            survivors_count: vector::length(&game.players) - vector::length(&game.eliminated),
+        });
 
-    // Check for tie in minority (only trigger revote if min_votes > 0)
-    let mut tied_options = vector::empty<u8>();
-    if (option_1_votes == min_votes) vector::push_back(&mut tied_options, 1);
-    if (option_2_votes == min_votes) vector::push_back(&mut tied_options, 2);
-    if (option_3_votes == min_votes) vector::push_back(&mut tied_options, 3);
+        let survivors_count = vector::length(&game.players) - vector::length(&game.eliminated);
 
-    // If 2+ options tied for last place AND they have actual votes → REVOTE
-    // If min_votes is 0, no one voted for those options, so no revote needed
-    if (vector::length(&tied_options) > 1 && min_votes > 0) {
+        if (survivors_count < MIN_SURVIVORS_TO_CONTINUE || game.current_round >= MAX_ROUNDS) {
+            finish_game(game, ctx);
+        } else {
+            start_next_round(game, clock, ctx);
+        };
+        return
+    };
+
+    // Step 4: Check if all options tie (revote)
+    if (option_1_votes == option_2_votes && option_2_votes == option_3_votes && option_1_votes > 0) {
         handle_revote(game, clock, ctx);
         return
     };
-    
-    // Single minority - eliminate those players
-    let minority_option = *vector::borrow(&tied_options, 0);
-    let eliminated_count = eliminate_minority(game, minority_option);
-    
+
+    // Step 5: Find minimum vote count
+    let min_votes = min_of_three(option_1_votes, option_2_votes, option_3_votes);
+
+    // Step 6: Collect ALL options with minimum votes (handle tied minorities)
+    let mut minority_options = vector::empty<u8>();
+    if (option_1_votes == min_votes && option_1_votes > 0) vector::push_back(&mut minority_options, 1);
+    if (option_2_votes == min_votes && option_2_votes > 0) vector::push_back(&mut minority_options, 2);
+    if (option_3_votes == min_votes && option_3_votes > 0) vector::push_back(&mut minority_options, 3);
+
+    // Step 7: Eliminate ALL players who picked minority options
+    let mut total_eliminated = non_answerers_eliminated;
+    let minority_len = vector::length(&minority_options);
+    let mut i = 0;
+
+    while (i < minority_len) {
+        let minority_option = *vector::borrow(&minority_options, i);
+        total_eliminated = total_eliminated + eliminate_option_voters(game, minority_option);
+        i = i + 1;
+    };
+
     event::emit(RoundFinalized {
         game_id: object::id(game),
         round: game.current_round,
-        eliminated_option: minority_option,
-        eliminated_count,
+        eliminated_option: if (minority_len == 1) *vector::borrow(&minority_options, 0) else 0,
+        eliminated_count: total_eliminated,
         survivors_count: vector::length(&game.players) - vector::length(&game.eliminated),
     });
-    
-    // Check if game should end
+
+    // Step 8: Check if game should end
     let survivors_count = vector::length(&game.players) - vector::length(&game.eliminated);
-    
+
     if (survivors_count < MIN_SURVIVORS_TO_CONTINUE || game.current_round >= MAX_ROUNDS) {
         finish_game(game, ctx);
     } else {
-        // Start next round
         start_next_round(game, clock, ctx);
     }
 }
@@ -598,37 +639,53 @@ fun min_of_three(a: u64, b: u64, c: u64): u64 {
     min
 }
 
-fun eliminate_minority(game: &mut Game, minority_option: u8): u64 {
+/// Eliminate players who didn't answer
+fun eliminate_non_answerers(game: &mut Game): u64 {
     let mut eliminated_count = 0u64;
     let players_len = vector::length(&game.players);
     let mut i = 0;
-    
+
     while (i < players_len) {
         let player = vector::borrow(&game.players, i);
-        
+
         // Skip if already eliminated
         if (!vector::contains(&game.eliminated, player)) {
-            let mut should_eliminate = false;
-            
-            if (table::contains(&game.player_answers, *player)) {
-                let choice = *table::borrow(&game.player_answers, *player);
-                if (choice == minority_option) {
-                    should_eliminate = true;
-                }
-            } else {
-                // Didn't answer = auto-eliminate
-                should_eliminate = true;
-            };
-            
-            if (should_eliminate) {
+            // Check if player answered
+            if (!table::contains(&game.player_answers, *player)) {
                 vector::push_back(&mut game.eliminated, *player);
                 eliminated_count = eliminated_count + 1;
             }
         };
-        
+
         i = i + 1;
     };
-    
+
+    eliminated_count
+}
+
+/// Eliminate players who voted for a specific option
+fun eliminate_option_voters(game: &mut Game, option: u8): u64 {
+    let mut eliminated_count = 0u64;
+    let players_len = vector::length(&game.players);
+    let mut i = 0;
+
+    while (i < players_len) {
+        let player = vector::borrow(&game.players, i);
+
+        // Skip if already eliminated
+        if (!vector::contains(&game.eliminated, player)) {
+            if (table::contains(&game.player_answers, *player)) {
+                let choice = *table::borrow(&game.player_answers, *player);
+                if (choice == option) {
+                    vector::push_back(&mut game.eliminated, *player);
+                    eliminated_count = eliminated_count + 1;
+                }
+            }
+        };
+
+        i = i + 1;
+    };
+
     eliminated_count
 }
 
@@ -640,18 +697,25 @@ fun handle_revote(
     ctx: &mut TxContext
 ) {
     game.revote_count = game.revote_count + 1;
-    
+
     // If max revotes reached, cancel game and send prize to platform
     if (game.revote_count > MAX_REVOTES_PER_GAME) {
         cancel_game(game, std::string::utf8(b"Max revotes reached"), ctx);
         return
     };
-    
+
     // Clear question data
     clear_round_data(game);
-    
+
     // Select new random questioner from survivors
     let remaining = get_remaining_players(game);
+
+    // Check if there are any remaining players (safety check)
+    if (vector::length(&remaining) == 0) {
+        cancel_game(game, std::string::utf8(b"No remaining players"), ctx);
+        return
+    };
+
     let seed = clock::timestamp_ms(clock) + tx_context::epoch(ctx);
     let index = seed % vector::length(&remaining);
     game.current_questioner = *vector::borrow(&remaining, index);
@@ -669,11 +733,22 @@ fun handle_revote(
 }
 
 fun clear_round_data(game: &mut Game) {
-    // Clear question text (answers will be overwritten on new submissions)
+    // Clear question text
     game.question_text = std::string::utf8(b"");
     game.option_a = std::string::utf8(b"");
     game.option_b = std::string::utf8(b"");
     game.option_c = std::string::utf8(b"");
+
+    // Clear all player answers from previous round
+    let players_len = vector::length(&game.players);
+    let mut i = 0;
+    while (i < players_len) {
+        let player = vector::borrow(&game.players, i);
+        if (table::contains(&game.player_answers, *player)) {
+            table::remove(&mut game.player_answers, *player);
+        };
+        i = i + 1;
+    };
 }
 
 fun start_next_round(
@@ -682,12 +757,19 @@ fun start_next_round(
     ctx: &mut TxContext
 ) {
     game.current_round = game.current_round + 1;
-    
+
     // Clear previous round data
     clear_round_data(game);
-    
+
     // Select new random questioner from survivors
     let remaining = get_remaining_players(game);
+
+    // Check if there are any remaining players (safety check)
+    if (vector::length(&remaining) == 0) {
+        finish_game(game, ctx);
+        return
+    };
+
     let seed = clock::timestamp_ms(clock) + tx_context::epoch(ctx);
     let index = seed % vector::length(&remaining);
     game.current_questioner = *vector::borrow(&remaining, index);
