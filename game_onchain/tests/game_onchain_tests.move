@@ -11,6 +11,7 @@ module game_onchain::battle_royale_tests {
         Game,
         PlayerTicket
     };
+    use game_onchain::reputation::{Self, BadgeRegistry};
     use std::string;
 
     // Test addresses
@@ -475,33 +476,28 @@ module game_onchain::battle_royale_tests {
             ts::return_shared(lobby);
         };
 
-        // Join only 5 players (less than min)
+        // Join only 1 player (less than min of 2)
         let players = get_test_players();
-        let mut i = 0;
-        while (i < 5) {
-            let player = *vector::borrow(&players, i);
-            scenario.next_tx(player);
-            {
-                let lobby = scenario.take_shared<TierLobby>();
-                let mut game = scenario.take_shared<Game>();
-                let mut treasury = scenario.take_shared<PlatformTreasury>();
-                
-                let payment = coin::mint_for_testing<OCT>(TIER_1_FEE, scenario.ctx());
-                
-                battle_royale::join_game(
-                    &lobby,
-                    &mut game,
-                    &mut treasury,
-                    payment,
-                    &clock,
-                    scenario.ctx()
-                );
-                
-                ts::return_shared(lobby);
-                ts::return_shared(game);
-                ts::return_shared(treasury);
-            };
-            i = i + 1;
+        scenario.next_tx(*vector::borrow(&players, 0));
+        {
+            let lobby = scenario.take_shared<TierLobby>();
+            let mut game = scenario.take_shared<Game>();
+            let mut treasury = scenario.take_shared<PlatformTreasury>();
+
+            let payment = coin::mint_for_testing<OCT>(TIER_1_FEE, scenario.ctx());
+
+            battle_royale::join_game(
+                &lobby,
+                &mut game,
+                &mut treasury,
+                payment,
+                &clock,
+                scenario.ctx()
+            );
+
+            ts::return_shared(lobby);
+            ts::return_shared(game);
+            ts::return_shared(treasury);
         };
 
         // Try to start - should fail
@@ -800,15 +796,17 @@ module game_onchain::battle_royale_tests {
         scenario.next_tx(ALICE);
         {
             let mut game = scenario.take_shared<Game>();
-            
-            battle_royale::finalize_round(&mut game, &clock, scenario.ctx());
-            
-            let (_, _, _, _, eliminated_count, _, _, _) = 
+            let mut badge_registry = scenario.take_shared<BadgeRegistry>();
+
+            battle_royale::finalize_round(&mut game, &mut badge_registry, &clock, scenario.ctx());
+
+            let (_, _, _, _, eliminated_count, _, _, _) =
                 battle_royale::get_game_info(&game);
-            
+
             assert!(eliminated_count == 2, 0); // 2 players voted C
-            
+
             ts::return_shared(game);
+            ts::return_shared(badge_registry);
         };
 
         clock.destroy_for_testing();
@@ -850,6 +848,7 @@ module game_onchain::battle_royale_tests {
         scenario.next_tx(ADMIN);
         {
             battle_royale::init_for_testing(scenario.ctx());
+            reputation::init_for_testing(scenario.ctx());
         };
 
         // Create game

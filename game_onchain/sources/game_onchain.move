@@ -11,12 +11,15 @@ use one::table::{Self, Table};
 use one::balance::{Self, Balance};
 use std::string::String;
 use std::vector;
+use game_onchain::role_machine::{Self, RoleMachine};
+use game_onchain::items::{Self, ImmunityToken};
+use game_onchain::reputation::{Self, ReputationBadge, BadgeRegistry};
 
 // === Constants ===
 const MAX_PLAYERS_PER_GAME: u64 = 50;
-const MIN_PLAYERS_TO_START: u64 = 10;
+const MIN_PLAYERS_TO_START: u64 = 2;
 const MAX_ROUNDS: u64 = 3;
-const MIN_SURVIVORS_TO_CONTINUE: u64 = 3;
+const MIN_SURVIVORS_TO_CONTINUE: u64 = 1;
 const QUESTION_TIME_MS: u64 = 120_000; // 2 minutes
 const ANSWER_TIME_MS: u64 = 60_000; // 1 minute
 const PLATFORM_FEE_BPS: u64 = 500; // 5%
@@ -61,6 +64,8 @@ const ENoQuestionAsked: u64 = 18;
 const EVotingStillActive: u64 = 19;
 const EPlayerAlreadyJoined: u64 = 20;
 const EQuestionAlreadyAsked: u64 = 21;
+const EImmunityAlreadyUsed: u64 = 22;
+const ENotInMinority: u64 = 23;
 
 // === Structs ===
 
@@ -82,12 +87,18 @@ public struct Game has key {
     id: UID,
     tier: u8,
     entry_fee: u64,
-    
+
     // Player tracking
     players: vector<address>,
     eliminated: vector<address>,
     player_answers: Table<address, u8>, // Current round answers (1/2/3)
-    
+
+    // Role system
+    role_machine: RoleMachine,
+
+    // Item system
+    immunity_used: Table<address, bool>,  // Track who used immunity this round
+
     // Game state
     status: u8, // 0=waiting, 1=active, 2=finished, 3=cancelled
     current_round: u64,
@@ -97,15 +108,20 @@ public struct Game has key {
     option_a: String,
     option_b: String,
     option_c: String,
-    
+
     // Timing
     round_start_time: u64,
     deadline: u64,
-    
+
     // Prize & revote
     prize_pool: Balance<OCT>,
     revote_count: u64,
     prize_claimed: Table<address, bool>,
+
+    // Win tracking
+    winning_role: u8, // 0=none, 1=citizens, 2=saboteurs
+    rounds_without_consensus: u64, // Track consecutive rounds without consensus
+    consensus_history: vector<bool>, // Track consensus result for each round
 }
 
 /// Player ticket NFT (proof of participation + leaderboard points)
@@ -275,6 +291,8 @@ public entry fun create_game(
         players: vector::empty(),
         eliminated: vector::empty(),
         player_answers: table::new(ctx),
+        role_machine: role_machine::new(ctx),
+        immunity_used: table::new(ctx),
         status: 0, // waiting
         current_round: 0,
         current_questioner: @0x0,
@@ -288,6 +306,9 @@ public entry fun create_game(
         prize_pool: balance::zero(),
         revote_count: 0,
         prize_claimed: table::new(ctx),
+        winning_role: 0,
+        rounds_without_consensus: 0,
+        consensus_history: vector::empty(),
     };
     
     event::emit(GameCreated {
@@ -310,10 +331,11 @@ public entry fun join_game(
     clock: &Clock,
     ctx: &mut TxContext
 ) {
+    // Check game capacity first (before status check, so EGameFull takes precedence)
+    assert!(vector::length(&game.players) < MAX_PLAYERS_PER_GAME, EGameFull);
     // Ensure game hasn't started yet (status must be 0 = waiting)
     assert!(game.status == 0, EGameNotWaiting);
     assert!(game.tier == lobby.tier, EInvalidTier);
-    assert!(vector::length(&game.players) < MAX_PLAYERS_PER_GAME, EGameFull);
     assert!(coin::value(&payment) >= lobby.entry_fee, EInsufficientPayment);
 
     let player = tx_context::sender(ctx);
@@ -373,22 +395,25 @@ fun start_game_internal(
 ) {
     game.status = 1; // active
     game.current_round = 1;
-    
+
+    // Assign roles to all players
+    role_machine::assign_roles(&mut game.role_machine, &game.players, clock, ctx);
+
     // Select first questioner randomly
     let seed = clock::timestamp_ms(clock) + tx_context::epoch(ctx);
     let questioner_index = (seed % vector::length(&game.players));
     game.current_questioner = *vector::borrow(&game.players, questioner_index);
-    
+
     game.round_start_time = clock::timestamp_ms(clock);
     game.deadline = game.round_start_time + QUESTION_TIME_MS;
     game.question_asked = false;
-    
+
     event::emit(GameStarted {
         game_id: object::id(game),
         player_count: vector::length(&game.players),
         first_questioner: game.current_questioner,
     });
-    
+
     event::emit(RoundStarted {
         game_id: object::id(game),
         round: game.current_round,
@@ -517,11 +542,65 @@ public entry fun submit_answer(
     });
 }
 
+// === Role Management ===
+
+/// Player reveals their own role (only they see it)
+public entry fun reveal_my_role(
+    game: &mut Game,
+    ctx: &TxContext
+) {
+    let player = tx_context::sender(ctx);
+
+    // Verify player is in game
+    assert!(vector::contains(&game.players, &player), EPlayerEliminated);
+
+    // Reveal role via role machine
+    role_machine::reveal_my_role(&mut game.role_machine, ctx);
+}
+
+// === Item Usage ===
+
+/// Use immunity token to avoid elimination this round
+/// NOTE: Caller must own the ImmunityToken object (enforced by Move type system)
+public entry fun use_immunity_token(
+    game: &mut Game,
+    token: ImmunityToken,
+    ctx: &TxContext
+) {
+    assert!(game.status == 1, EGameNotActive);
+
+    let player = tx_context::sender(ctx);
+
+    // Verify player is in game and not eliminated
+    assert!(vector::contains(&game.players, &player), EPlayerEliminated);
+    assert!(!vector::contains(&game.eliminated, &player), EPlayerEliminated);
+
+    // Verify hasn't used immunity this round already
+    let already_used = table::contains(&game.immunity_used, player) &&
+                       *table::borrow(&game.immunity_used, player);
+    assert!(!already_used, EImmunityAlreadyUsed);
+
+    // Double-check token owner field matches sender (defense in depth)
+    // The Move type system already ensures ownership, but we verify the owner field too
+    assert!(items::get_token_owner(&token) == player, EPlayerEliminated);
+
+    // Mark immunity as used for this round (set to true)
+    if (table::contains(&game.immunity_used, player)) {
+        *table::borrow_mut(&mut game.immunity_used, player) = true;
+    } else {
+        table::add(&mut game.immunity_used, player, true);
+    };
+
+    // Burn the token (one-time use)
+    items::burn_immunity_token(token, object::id(game), game.current_round);
+}
+
 // === Round Finalization ===
 
 /// Finalize round (anyone can call after deadline)
 public entry fun finalize_round(
     game: &mut Game,
+    badge_registry: &mut BadgeRegistry,
     clock: &Clock,
     ctx: &mut TxContext
 ) {
@@ -536,32 +615,65 @@ public entry fun finalize_round(
 
     // Step 2: Count votes from remaining players
     let (option_1_votes, option_2_votes, option_3_votes) = count_votes(game);
+    let survivors_count = vector::length(&game.players) - vector::length(&game.eliminated);
+
+    // Step 2.5: Check for consensus (50%+ voted same way)
+    let consensus_reached = role_machine::check_consensus(
+        survivors_count,
+        option_1_votes,
+        option_2_votes,
+        option_3_votes,
+        game.current_round
+    );
+
+    // Track consensus in history
+    vector::push_back(&mut game.consensus_history, consensus_reached);
+
+    // Update rounds without consensus counter
+    if (!consensus_reached) {
+        game.rounds_without_consensus = game.rounds_without_consensus + 1;
+    } else {
+        game.rounds_without_consensus = 0; // Reset on consensus
+    };
 
     // Step 3: Check if everyone picked the same option (move to next round)
     if ((option_1_votes > 0 && option_2_votes == 0 && option_3_votes == 0) ||
         (option_1_votes == 0 && option_2_votes > 0 && option_3_votes == 0) ||
         (option_1_votes == 0 && option_2_votes == 0 && option_3_votes > 0)) {
-        // All picked same option → move to next round
+        // All picked same option → move to next round (perfect consensus)
         event::emit(RoundFinalized {
             game_id: object::id(game),
             round: game.current_round,
             eliminated_option: 0, // No option eliminated (all same)
             eliminated_count: non_answerers_eliminated,
-            survivors_count: vector::length(&game.players) - vector::length(&game.eliminated),
+            survivors_count,
         });
 
-        let survivors_count = vector::length(&game.players) - vector::length(&game.eliminated);
+        // Check for early win conditions
+        let survivors = get_remaining_players(game);
+        let win_role = role_machine::check_win_condition(
+            &game.role_machine,
+            &survivors,
+            game.current_round,
+            MAX_ROUNDS,
+            game.rounds_without_consensus
+        );
 
-        if (survivors_count < MIN_SURVIVORS_TO_CONTINUE || game.current_round >= MAX_ROUNDS) {
-            finish_game(game, ctx);
+        if (win_role != 0) {
+            // Someone won - end game immediately
+            game.winning_role = win_role;
+            finish_game(game, badge_registry, clock, ctx);
+        } else if (survivors_count < MIN_SURVIVORS_TO_CONTINUE || game.current_round >= MAX_ROUNDS) {
+            finish_game(game, badge_registry, clock, ctx);
         } else {
-            start_next_round(game, clock, ctx);
+            start_next_round(game, badge_registry, clock, ctx);
         };
         return
     };
 
     // Step 4: Check if all options tie (revote)
     if (option_1_votes == option_2_votes && option_2_votes == option_3_votes && option_1_votes > 0) {
+        // Perfect tie = no consensus (saboteurs benefit from this)
         handle_revote(game, clock, ctx);
         return
     };
@@ -594,13 +706,26 @@ public entry fun finalize_round(
         survivors_count: vector::length(&game.players) - vector::length(&game.eliminated),
     });
 
-    // Step 8: Check if game should end
+    // Step 8: Check for early win conditions after eliminations
     let survivors_count = vector::length(&game.players) - vector::length(&game.eliminated);
+    let survivors = get_remaining_players(game);
 
-    if (survivors_count < MIN_SURVIVORS_TO_CONTINUE || game.current_round >= MAX_ROUNDS) {
-        finish_game(game, ctx);
+    let win_role = role_machine::check_win_condition(
+        &game.role_machine,
+        &survivors,
+        game.current_round,
+        MAX_ROUNDS,
+        game.rounds_without_consensus
+    );
+
+    if (win_role != 0) {
+        // Someone won - end game immediately
+        game.winning_role = win_role;
+        finish_game(game, badge_registry, clock, ctx);
+    } else if (survivors_count < MIN_SURVIVORS_TO_CONTINUE || game.current_round >= MAX_ROUNDS) {
+        finish_game(game, badge_registry, clock, ctx);
     } else {
-        start_next_round(game, clock, ctx);
+        start_next_round(game, badge_registry, clock, ctx);
     }
 }
 
@@ -639,7 +764,7 @@ fun min_of_three(a: u64, b: u64, c: u64): u64 {
     min
 }
 
-/// Eliminate players who didn't answer
+/// Eliminate players who didn't answer (respects immunity)
 fun eliminate_non_answerers(game: &mut Game): u64 {
     let mut eliminated_count = 0u64;
     let players_len = vector::length(&game.players);
@@ -652,8 +777,16 @@ fun eliminate_non_answerers(game: &mut Game): u64 {
         if (!vector::contains(&game.eliminated, player)) {
             // Check if player answered
             if (!table::contains(&game.player_answers, *player)) {
-                vector::push_back(&mut game.eliminated, *player);
-                eliminated_count = eliminated_count + 1;
+                // Check if player has immunity for this round
+                let has_immunity = table::contains(&game.immunity_used, *player) &&
+                                  *table::borrow(&game.immunity_used, *player);
+
+                if (!has_immunity) {
+                    // No immunity - eliminate player
+                    vector::push_back(&mut game.eliminated, *player);
+                    eliminated_count = eliminated_count + 1;
+                }
+                // If has immunity, skip elimination (immunity saves them)
             }
         };
 
@@ -663,7 +796,7 @@ fun eliminate_non_answerers(game: &mut Game): u64 {
     eliminated_count
 }
 
-/// Eliminate players who voted for a specific option
+/// Eliminate players who voted for a specific option (respects immunity)
 fun eliminate_option_voters(game: &mut Game, option: u8): u64 {
     let mut eliminated_count = 0u64;
     let players_len = vector::length(&game.players);
@@ -677,8 +810,16 @@ fun eliminate_option_voters(game: &mut Game, option: u8): u64 {
             if (table::contains(&game.player_answers, *player)) {
                 let choice = *table::borrow(&game.player_answers, *player);
                 if (choice == option) {
-                    vector::push_back(&mut game.eliminated, *player);
-                    eliminated_count = eliminated_count + 1;
+                    // Check if player has immunity for this round (check both key and value)
+                    let has_immunity = table::contains(&game.immunity_used, *player) &&
+                                      *table::borrow(&game.immunity_used, *player);
+
+                    if (!has_immunity) {
+                        // No immunity - eliminate player
+                        vector::push_back(&mut game.eliminated, *player);
+                        eliminated_count = eliminated_count + 1;
+                    }
+                    // If has immunity, skip elimination (immunity saves them)
                 }
             }
         };
@@ -739,7 +880,7 @@ fun clear_round_data(game: &mut Game) {
     game.option_b = std::string::utf8(b"");
     game.option_c = std::string::utf8(b"");
 
-    // Clear all player answers from previous round
+    // Clear all player answers and immunity flags from previous round
     let players_len = vector::length(&game.players);
     let mut i = 0;
     while (i < players_len) {
@@ -747,12 +888,16 @@ fun clear_round_data(game: &mut Game) {
         if (table::contains(&game.player_answers, *player)) {
             table::remove(&mut game.player_answers, *player);
         };
+        if (table::contains(&game.immunity_used, *player)) {
+            table::remove(&mut game.immunity_used, *player);
+        };
         i = i + 1;
     };
 }
 
 fun start_next_round(
     game: &mut Game,
+    badge_registry: &mut BadgeRegistry,
     clock: &Clock,
     ctx: &mut TxContext
 ) {
@@ -766,7 +911,7 @@ fun start_next_round(
 
     // Check if there are any remaining players (safety check)
     if (vector::length(&remaining) == 0) {
-        finish_game(game, ctx);
+        finish_game(game, badge_registry, clock, ctx);
         return
     };
 
@@ -802,30 +947,154 @@ fun get_remaining_players(game: &Game): vector<address> {
     remaining
 }
 
+/// Count role distribution among survivors
+fun count_winning_role_survivors(
+    machine: &RoleMachine,
+    survivors: &vector<address>,
+    target_role: u8
+): (u64, u64) {
+    let mut role_count = 0u64;
+    let mut other_count = 0u64;
+
+    let len = vector::length(survivors);
+    let mut i = 0;
+
+    while (i < len) {
+        let player = vector::borrow(survivors, i);
+        if (role_machine::is_role(machine, *player, target_role)) {
+            role_count = role_count + 1;
+        } else {
+            other_count = other_count + 1;
+        };
+        i = i + 1;
+    };
+
+    (role_count, other_count)
+}
+
 // === Game End ===
 
-fun finish_game(game: &mut Game, ctx: &mut TxContext) {
+fun finish_game(
+    game: &mut Game,
+    badge_registry: &mut BadgeRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext
+) {
     game.status = 2; // finished
-    
+
     let survivors = get_remaining_players(game);
     let survivors_count = vector::length(&survivors);
-    let total_prize = balance::value(&game.prize_pool);
-    
-    let prize_per_survivor = if (survivors_count > 0) {
-        total_prize / survivors_count
-    } else {
-        0
+
+    // Check role-based win condition (if not already set)
+    if (game.winning_role == 0) {
+        game.winning_role = role_machine::check_win_condition(
+            &game.role_machine,
+            &survivors,
+            game.current_round,
+            MAX_ROUNDS,
+            game.rounds_without_consensus
+        );
     };
-    
+
+    let total_prize = balance::value(&game.prize_pool);
+
+    // Distribute prizes based on winning role
+    let prize_per_winner = if (game.winning_role == role_machine::role_citizen()) {
+        // Citizens won - only surviving citizens get prize
+        let (citizen_count, _) = count_winning_role_survivors(&game.role_machine, &survivors, role_machine::role_citizen());
+        // Validate that there are actually citizen winners
+        assert!(citizen_count > 0, ENotSurvivor);
+        total_prize / citizen_count
+    } else if (game.winning_role == role_machine::role_saboteur()) {
+        // Saboteurs won - ALL saboteurs (even eliminated) get prize
+        let (_, saboteur_total) = role_machine::get_role_distribution(&game.role_machine);
+        if (saboteur_total > 0) {
+            total_prize / saboteur_total
+        } else {
+            0
+        }
+    } else {
+        // No clear winner (shouldn't happen, but handle gracefully)
+        if (survivors_count > 0) {
+            total_prize / survivors_count
+        } else {
+            0
+        }
+    };
+
     event::emit(GameFinished {
         game_id: object::id(game),
         ending_round: game.current_round,
         survivors_count,
-        prize_per_survivor,
+        prize_per_survivor: prize_per_winner,
     });
-    
+
     // Mint PlayerTicket NFTs for all players
     mint_player_tickets(game, &survivors, ctx);
+
+    // Update or mint reputation badges for all players
+    update_player_reputations(game, badge_registry, clock, ctx);
+}
+
+/// Update reputation badges for all players after game ends
+fun update_player_reputations(
+    game: &Game,
+    badge_registry: &mut BadgeRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext
+) {
+    let players_len = vector::length(&game.players);
+    let mut i = 0;
+    let timestamp = clock::timestamp_ms(clock);
+
+    while (i < players_len) {
+        let player = vector::borrow(&game.players, i);
+
+        // Determine if player won
+        let did_win = is_winner(game, *player);
+
+        // Get player's role
+        let is_citizen = role_machine::is_role(&game.role_machine, *player, role_machine::role_citizen());
+
+        // Calculate points earned
+        let points = calculate_points(game.tier, game.current_round);
+
+        // Check if player already has a badge
+        if (reputation::has_badge(badge_registry, *player)) {
+            // Badge exists - we need to update it (but can't access it here directly)
+            // Note: Player will need to call update_my_badge separately with their badge
+            // This is a limitation of the soul-bound token design
+        } else {
+            // Mint new badge
+            reputation::mint_badge(
+                badge_registry,
+                *player,
+                points,
+                did_win,
+                is_citizen,
+                timestamp,
+                ctx
+            );
+        };
+
+        i = i + 1;
+    };
+}
+
+/// Check if player is a winner based on role and game outcome
+fun is_winner(game: &Game, player: address): bool {
+    let is_survivor = !vector::contains(&game.eliminated, &player);
+
+    if (game.winning_role == role_machine::role_citizen()) {
+        // Citizens won - must be surviving citizen
+        is_survivor && role_machine::is_role(&game.role_machine, player, role_machine::role_citizen())
+    } else if (game.winning_role == role_machine::role_saboteur()) {
+        // Saboteurs won - any saboteur wins
+        role_machine::is_role(&game.role_machine, player, role_machine::role_saboteur())
+    } else {
+        // No clear winner - survivors win
+        is_survivor
+    }
 }
 
 fun cancel_game(game: &mut Game, reason: String, ctx: &mut TxContext) {
@@ -888,26 +1157,49 @@ fun calculate_points(tier: u8, ending_round: u64): u64 {
 
 // === Prize Claiming ===
 
-/// Survivors claim their share of prize
+/// Winners claim their share of prize (role-based)
 public entry fun claim_prize(
     game: &mut Game,
     ctx: &mut TxContext
 ) {
     assert!(game.status == 2, EGameNotFinished);
-    
+
     let sender = tx_context::sender(ctx);
-    
-    // Check is survivor
-    let survivors = get_remaining_players(game);
-    assert!(vector::contains(&survivors, &sender), ENotSurvivor);
-    
+
+    // Check player is in game
+    assert!(vector::contains(&game.players, &sender), EPlayerEliminated);
+
     // Check hasn't claimed yet
     assert!(!table::contains(&game.prize_claimed, sender), EPrizeAlreadyClaimed);
-    
-    // Calculate share
-    let survivors_count = vector::length(&survivors);
+
     let total_prize = balance::value(&game.prize_pool);
-    let prize_share = total_prize / survivors_count;
+    let mut prize_share = 0u64;
+
+    // Determine if player can claim based on winning role
+    if (game.winning_role == role_machine::role_citizen()) {
+        // Citizens won - only surviving citizens can claim
+        let survivors = get_remaining_players(game);
+        assert!(vector::contains(&survivors, &sender), ENotSurvivor);
+        assert!(role_machine::is_role(&game.role_machine, sender, role_machine::role_citizen()), ENotSurvivor);
+
+        let (citizen_count, _) = count_winning_role_survivors(&game.role_machine, &survivors, role_machine::role_citizen());
+        prize_share = total_prize / citizen_count;
+
+    } else if (game.winning_role == role_machine::role_saboteur()) {
+        // Saboteurs won - ALL saboteurs can claim (even if eliminated!)
+        assert!(role_machine::is_role(&game.role_machine, sender, role_machine::role_saboteur()), ENotSurvivor);
+
+        let (_, saboteur_total) = role_machine::get_role_distribution(&game.role_machine);
+        prize_share = total_prize / saboteur_total;
+
+    } else {
+        // No clear winner - survivors split equally
+        let survivors = get_remaining_players(game);
+        assert!(vector::contains(&survivors, &sender), ENotSurvivor);
+
+        let survivors_count = vector::length(&survivors);
+        prize_share = total_prize / survivors_count;
+    };
     
     // Mark as claimed
     table::add(&mut game.prize_claimed, sender, true);
@@ -925,6 +1217,42 @@ public entry fun claim_prize(
         player: sender,
         amount: prize_share,
     });
+}
+
+/// Update player's reputation badge after completing a game
+public entry fun update_my_badge_after_game(
+    game: &Game,
+    badge: &mut ReputationBadge,
+    clock: &Clock,
+    ctx: &TxContext
+) {
+    assert!(game.status == 2, EGameNotFinished);
+
+    let sender = tx_context::sender(ctx);
+
+    // Verify sender is the badge owner
+    assert!(reputation::get_player_address(badge) == sender, ENotSurvivor);
+
+    // Verify player was in this game
+    assert!(vector::contains(&game.players, &sender), EPlayerEliminated);
+
+    // Determine if player won
+    let did_win = is_winner(game, sender);
+
+    // Get player's role
+    let is_citizen = role_machine::is_role(&game.role_machine, sender, role_machine::role_citizen());
+
+    // Calculate points earned
+    let points = calculate_points(game.tier, game.current_round);
+
+    // Update badge
+    reputation::update_badge(
+        badge,
+        points,
+        did_win,
+        is_citizen,
+        clock::timestamp_ms(clock)
+    );
 }
 
 // === Admin Functions ===
@@ -1021,8 +1349,23 @@ public fun has_player_answered(game: &Game, player: address): bool {
     table::contains(&game.player_answers, player)
 }
 
+/// Get player's OWN answer (can check anytime)
+public fun get_my_answer(game: &Game, ctx: &TxContext): u8 {
+    let sender = tx_context::sender(ctx);
+    *table::borrow(&game.player_answers, sender)
+}
+
+/// Check if player has used immunity this round
+public fun has_used_immunity(game: &Game, player: address): bool {
+    table::contains(&game.immunity_used, player) &&
+    *table::borrow(&game.immunity_used, player)
+}
+
 /// Get player's answer for current round (if they answered)
-public fun get_player_answer(game: &Game, player: address): u8 {
+/// Only accessible after round is finalized (deadline passed)
+public fun get_player_answer(game: &Game, player: address, clock: &Clock): u8 {
+    let current_time = clock::timestamp_ms(clock);
+    assert!(current_time > game.deadline, EVotingStillActive);
     *table::borrow(&game.player_answers, player)
 }
 
@@ -1079,10 +1422,39 @@ public fun get_voting_stats(game: &Game, clock: &Clock): (u64, u64, u64) {
     (count_a, count_b, count_c)
 }
 
-    /// Check if player can claim prize
+    /// Check if player can claim prize (role-based)
     public fun can_claim_prize(game: &Game, player: address): bool {
-        game.status == 2 && // finished
-        !vector::contains(&game.eliminated, &player) &&
-        !table::contains(&game.prize_claimed, player)
+        if (game.status != 2) return false; // Game not finished
+        if (table::contains(&game.prize_claimed, player)) return false; // Already claimed
+
+        // Check based on winning role
+        if (game.winning_role == role_machine::role_citizen()) {
+            // Citizens won - must be surviving citizen
+            let survivors = get_remaining_players(game);
+            vector::contains(&survivors, &player) &&
+            role_machine::is_role(&game.role_machine, player, role_machine::role_citizen())
+        } else if (game.winning_role == role_machine::role_saboteur()) {
+            // Saboteurs won - any saboteur can claim
+            role_machine::is_role(&game.role_machine, player, role_machine::role_saboteur())
+        } else {
+            // No clear winner - survivors only
+            let survivors = get_remaining_players(game);
+            vector::contains(&survivors, &player)
+        }
+    }
+
+    /// Get role distribution for the game
+    public fun get_role_distribution(game: &Game): (u64, u64) {
+        role_machine::get_role_distribution(&game.role_machine)
+    }
+
+    /// Get winning role (0=none, 1=citizens, 2=saboteurs)
+    public fun get_winning_role(game: &Game): u8 {
+        game.winning_role
+    }
+
+    /// Check if player has revealed their role
+    public fun has_player_revealed_role(game: &Game, player: address): bool {
+        role_machine::has_revealed_role(&game.role_machine, player)
     }
 }

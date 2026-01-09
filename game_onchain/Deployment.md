@@ -300,3 +300,6 @@ Transaction Digest: ApS37EtE7VBz9HeUfbMRZZdfRPt9jJ5hmHMtkT4PghUN
 │  └──                                                                                              │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯
 uzo@DESKTOP-V1MEA7D:~/my_directory/gasless-superapp/game_onchain$ one client publish --gas-budget 100000000
+
+
+ export PATH="$HOME/.cargo/bin:$PATH"
