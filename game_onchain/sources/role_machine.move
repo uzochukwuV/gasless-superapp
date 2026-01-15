@@ -85,11 +85,13 @@ module game_onchain::role_machine {
         let player_count = vector::length(players);
         assert!(player_count >= 2, ENotEnoughPlayers);
 
-        // Calculate saboteur count (1 per 3 players, minimum 1 if >= 3 players)
-        let saboteur_count = if (player_count >= 3) {
+        // Calculate saboteur count (1 per 3 players, minimum 1 if >= 5 players)
+        // For 2-4 players: pure cooperation game (all citizens)
+        // For 5+ players: social deduction game (citizens vs saboteurs)
+        let saboteur_count = if (player_count >= 5) {
             (player_count * SABOTEUR_RATIO_NUMERATOR) / SABOTEUR_RATIO_DENOMINATOR
         } else {
-            0 // No saboteurs for 2 player games
+            0 // No saboteurs for 2-4 player games
         };
 
         let citizen_count = player_count - saboteur_count;
@@ -184,7 +186,15 @@ module game_onchain::role_machine {
         let threshold = (alive_count * CONSENSUS_THRESHOLD_PERCENT + 99) / 100; // Ceiling
 
         let max_votes = max_of_three(option_1_votes, option_2_votes, option_3_votes);
-        let consensus_reached = max_votes >= threshold;
+
+        // Check if multiple options tied for max (no consensus if tie)
+        let mut options_at_max = 0;
+        if (option_1_votes == max_votes && option_1_votes > 0) options_at_max = options_at_max + 1;
+        if (option_2_votes == max_votes && option_2_votes > 0) options_at_max = options_at_max + 1;
+        if (option_3_votes == max_votes && option_3_votes > 0) options_at_max = options_at_max + 1;
+
+        // Only consensus if ONE option has majority AND no tie at the top
+        let consensus_reached = max_votes >= threshold && options_at_max == 1;
 
         event::emit(ConsensusChecked {
             round,

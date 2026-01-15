@@ -17,11 +17,11 @@ use game_onchain::reputation::{Self, ReputationBadge, BadgeRegistry};
 
 // === Constants ===
 const MAX_PLAYERS_PER_GAME: u64 = 50;
-const MIN_PLAYERS_TO_START: u64 = 2;
+const MIN_PLAYERS_TO_START: u64 = 4;  // Minimum 4 players for better game balance
 const MAX_ROUNDS: u64 = 3;
-const MIN_SURVIVORS_TO_CONTINUE: u64 = 1;
+const MIN_SURVIVORS_TO_CONTINUE: u64 = 2;  // Need at least 2 for voting to work
 const QUESTION_TIME_MS: u64 = 120_000; // 2 minutes
-const ANSWER_TIME_MS: u64 = 60_000; // 1 minute
+const ANSWER_TIME_MS: u64 = 150_000; // 1 minute
 const PLATFORM_FEE_BPS: u64 = 500; // 5%
 const MAX_REVOTES_PER_GAME: u64 = 1;
 
@@ -678,18 +678,60 @@ public entry fun finalize_round(
         return
     };
 
-    // Step 5: Find minimum vote count
-    let min_votes = min_of_three(option_1_votes, option_2_votes, option_3_votes);
+    // Step 5: Find minimum vote count (only among options that got votes)
+    let min_votes = {
+        let mut min = 999999u64;
+        if (option_1_votes > 0 && option_1_votes < min) min = option_1_votes;
+        if (option_2_votes > 0 && option_2_votes < min) min = option_2_votes;
+        if (option_3_votes > 0 && option_3_votes < min) min = option_3_votes;
+        if (min == 999999u64) 0 else min // Return 0 if no one voted
+    };
 
-    // Step 6: Collect ALL options with minimum votes (handle tied minorities)
+    // Step 6: Collect ALL options with minimum votes (only options that actually got votes)
     let mut minority_options = vector::empty<u8>();
-    if (option_1_votes == min_votes && option_1_votes > 0) vector::push_back(&mut minority_options, 1);
-    if (option_2_votes == min_votes && option_2_votes > 0) vector::push_back(&mut minority_options, 2);
-    if (option_3_votes == min_votes && option_3_votes > 0) vector::push_back(&mut minority_options, 3);
+    if (option_1_votes > 0 && option_1_votes == min_votes) vector::push_back(&mut minority_options, 1);
+    if (option_2_votes > 0 && option_2_votes == min_votes) vector::push_back(&mut minority_options, 2);
+    if (option_3_votes > 0 && option_3_votes == min_votes) vector::push_back(&mut minority_options, 3);
 
-    // Step 7: Eliminate ALL players who picked minority options
-    let mut total_eliminated = non_answerers_eliminated;
+    // Step 7: Check if eliminating minority would result in 0 or 1 survivor
+    // Count how many would be eliminated
+    let mut would_be_eliminated = 0u64;
     let minority_len = vector::length(&minority_options);
+    let mut j = 0;
+    while (j < minority_len) {
+        let minority_option = *vector::borrow(&minority_options, j);
+        if (minority_option == 1) would_be_eliminated = would_be_eliminated + option_1_votes
+        else if (minority_option == 2) would_be_eliminated = would_be_eliminated + option_2_votes
+        else if (minority_option == 3) would_be_eliminated = would_be_eliminated + option_3_votes;
+        j = j + 1;
+    };
+
+    let would_remain = survivors_count - would_be_eliminated;
+
+    // Step 8: Handle special case where elimination would leave 0-2 survivors
+    if (would_remain <= 2) {
+        // If elimination would leave 0, 1, or 2 survivors, proceed with elimination
+        // This ensures we get 1-2 winners (never 0, never 3+)
+        // would_remain == 0: Everyone eliminated in deadlock → Skip to finish with current survivors
+        // would_remain == 1: Single winner emerges
+        // would_remain == 2: Two winners emerge
+        if (would_remain == 0) {
+            // Perfect deadlock - don't eliminate anyone, end with current survivors
+            event::emit(RoundFinalized {
+                game_id: object::id(game),
+                round: game.current_round,
+                eliminated_option: 0,
+                eliminated_count: non_answerers_eliminated,
+                survivors_count,
+            });
+            finish_game(game, badge_registry, clock, ctx);
+            return
+        }
+        // Otherwise proceed with elimination below to get 1 or 2 winners
+    };
+
+    // Step 9: Eliminate ALL players who picked minority options
+    let mut total_eliminated = non_answerers_eliminated;
     let mut i = 0;
 
     while (i < minority_len) {
@@ -706,10 +748,17 @@ public entry fun finalize_round(
         survivors_count: vector::length(&game.players) - vector::length(&game.eliminated),
     });
 
-    // Step 8: Check for early win conditions after eliminations
+    // Step 10: Check game end conditions after eliminations
     let survivors_count = vector::length(&game.players) - vector::length(&game.eliminated);
     let survivors = get_remaining_players(game);
 
+    // Step 10.1: If 1 or 2 survivors remain, game ends (we have our winner(s))
+    if (survivors_count <= 2) {
+        finish_game(game, badge_registry, clock, ctx);
+        return
+    };
+
+    // Step 10.2: Check role-based win conditions (saboteurs vs citizens)
     let win_role = role_machine::check_win_condition(
         &game.role_machine,
         &survivors,
@@ -718,13 +767,27 @@ public entry fun finalize_round(
         game.rounds_without_consensus
     );
 
-    if (win_role != 0) {
-        // Someone won - end game immediately
+    // TWO-PHASE SYSTEM:
+    // Phase 1: Saboteur hunt - if saboteurs win, end game
+    // Phase 2: If citizens win but 3+ survive, continue to reduce to 1-2 winners
+
+    if (win_role == role_machine::role_saboteur()) {
+        // Saboteurs won - end game immediately
         game.winning_role = win_role;
         finish_game(game, badge_registry, clock, ctx);
-    } else if (survivors_count < MIN_SURVIVORS_TO_CONTINUE || game.current_round >= MAX_ROUNDS) {
+    } else if (win_role == role_machine::role_citizen() && survivors_count > 2) {
+        // Citizens eliminated all saboteurs BUT 3+ citizens remain
+        // Continue playing (Phase 2: citizen reduction) until only 1-2 remain
+        start_next_round(game, badge_registry, clock, ctx);
+    } else if (win_role == role_machine::role_citizen()) {
+        // Citizens won and only 1-2 citizens remain - end game
+        game.winning_role = win_role;
+        finish_game(game, badge_registry, clock, ctx);
+    } else if (game.current_round >= MAX_ROUNDS) {
+        // Max rounds reached - end game with current survivors
         finish_game(game, badge_registry, clock, ctx);
     } else {
+        // No win condition yet - continue to next round
         start_next_round(game, badge_registry, clock, ctx);
     }
 }
