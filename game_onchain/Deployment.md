@@ -665,4 +665,4 @@ uzo@DESKTOP-V1MEA7D:~/my_directory/gasless-superapp/game_onchain$ one client pub
 
  export PATH="$HOME/.cargo/bin:$PATH"
 
- one client publish --gas-budget 100000000 --skip-dependency-verification
+ one client publish --gas-budget 500000000 --skip-dependency-verification

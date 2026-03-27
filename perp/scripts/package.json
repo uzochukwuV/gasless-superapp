@@ -1,0 +1,22 @@
+{
+  "name": "one-price-feed-updater",
+  "version": "1.0.0",
+  "description": "Price feed updater for One blockchain",
+  "main": "update_prices.js",
+  "scripts": {
+    "start": "node update_prices.js start",
+    "update-once": "node update_prices.js once",
+    "add-updater": "node update_prices.js add-updater",
+    "query": "node update_prices.js query"
+  },
+  "dependencies": {
+    "@mysten/sui.js": "^0.50.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
